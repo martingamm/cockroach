@@ -5,5 +5,7 @@ import (
 )
 
 func main() {
-    c := NewCrawler("http://telenor.com")
+    c := Crawl("http://telenor.com", 10)
+
+    fmt.Println(c)
 }
