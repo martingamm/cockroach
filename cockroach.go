@@ -1,7 +1,7 @@
 // TODO: Remove logs and debugs.
 // TODO: Add quit after x seconds if depth not reached.
-// TODO:
-// TODO:
+// TODO: Stalls if < 10000 goroutines for some reason.
+// TODO: The bloody hash-map problem..
 
 // Should probably be its own package, but this is a minimal PoC.
 // Names are capitalized as if this was a separate package.
@@ -43,7 +43,7 @@ type outputmap struct {
     results map[string]*Result
     // All the goroutines including the main Crawl goroutine will be
     // accessing the result-map, so we need a way to lock it.
-    sync.RWMutex
+    sync.Mutex
 }
 
 func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
@@ -92,15 +92,6 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
         //log.Print("got new url from queue: ", item.url, " at depth ", item.depth)
         //log.Print("worker began on: ", item.url, ", depth: ", item.depth)
         // If the url is in the result-set already, we skip ahead.
-        output.Lock()
-        if _, ok := output.results[item.url]; ok {
-            output.Unlock()
-            //log.Print("worker skipping: ", item.url)
-            continue
-        }
-        // Put placeholder so other workers correctly skip.
-        output.results[item.url] = &Result{} // FIXME
-        output.Unlock()
 
         response, err := http.Get(item.url)
         // Something wrong happened to the request, log what went wrong and go
@@ -120,15 +111,28 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
           depth: item.depth}
 
         // Add the new urls we found to the queue.
-        for _, newUrl := range urls {
-            queue<-urlChanItem{url:newUrl, depth:item.depth+1}
-            //log.Print("added new url to queue: ", newUrl)
-        }
+        go dispatcher(urls, output, queue, item.depth)
 
         //log.Print("worker finished: ", item.url)
     }
 
     return
+}
+
+func dispatcher(urls []string, output outputmap, queue chan urlChanItem, depth int) {
+    for _, newUrl := range urls {
+        output.Lock()
+        if _, ok := output.results[newUrl]; ok {
+            output.Unlock()
+            continue
+        }
+        output.Unlock()
+
+        // Put placeholder so other workers correctly skip.
+        output.results[newUrl] = &Result{} // FIXME
+        queue<-urlChanItem{url: newUrl, depth: depth+1}
+        //log.Print("added new url to queue: ", newUrl)
+    }
 }
 
 func getUrls(resp *http.Response, parentUrlStr string) []string {
@@ -160,7 +164,6 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
         // Since the regexp is a bit shaky, we test the validity of the url
         // with url.Parse, and only relay valid urls.
         if up, err := parentUrl.Parse(u[1]); err == nil {
-            // If up is absolute url, up is returned directly.
             output = append(output, up.String())
             //log.Print("url found: ", up.String())
         } else {

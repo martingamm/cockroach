@@ -11,7 +11,7 @@ func main() {
     //runtime.GOMAXPROCS(1)
     // The seed url, max depth and number of worker-goroutines to be used.
     //c := Crawl("http://telenor.com", 10, 100)
-    c := Crawl("http://vg.no", 10, 10000)
+    c := Crawl("http://telenor.no", 10, 10000)
 
     fmt.Println("URLs crawled:")
     fmt.Println("=============")
