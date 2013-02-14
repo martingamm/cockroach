@@ -14,11 +14,9 @@ import (
     "log"
     "io/ioutil"
     "regexp"
-    "runtime"
 )
 
 type Result struct {
-    documentUrl string
     // We store http.Responses instead of the body string or similar because
     // http.Results are standardized and easy to work with in Go, if this
     // crawler was to be used as a library by some other application.
@@ -26,9 +24,15 @@ type Result struct {
     urls        []string
 }
 
-type queueItem struct {
+type urlChanItem struct {
     url   string
     depth int
+}
+
+type resultChanItem struct {
+    url    string
+    result *Result
+    depth  int
 }
 
 type outputmap struct {
@@ -39,13 +43,13 @@ type outputmap struct {
     results map[string]*Result
     // All the goroutines including the main Crawl goroutine will be
     // accessing the result-map, so we need a way to lock it.
-    sync.Mutex
+    sync.RWMutex
 }
 
 func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
     output := outputmap{results: make(map[string]*Result)}
-    urlChan := make(chan queueItem, 100) // Rather arbitrary buffer-sizes.
-    resultChan := make(chan *Result, 100)
+    urlChan := make(chan urlChanItem, 100) // Rather arbitrary buffer-sizes.
+    resultChan := make(chan resultChanItem, 100)
 
     // Spinning up a number of worker-goroutines. We could alternatively
     // choose to spin up a new goroutine for every new url discovered, but
@@ -55,10 +59,10 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
     // we would need some epirical testing to figure out the optimum for a
     // given system.
     for w:= 1; w <= nWorkers; w++ {
-        go worker(urlChan, resultChan, maxDepth, output)
+        go worker(urlChan, resultChan, output)
     }
 
-    urlChan<-queueItem{url:seedUrl, depth: 0}
+    urlChan<-urlChanItem{url:seedUrl, depth: 0}
 
     for res := range resultChan {
         // The key (url) is now redundant since it serves as key AND as part
@@ -67,8 +71,14 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
         // The overhead is rather small anyway, but this could of course be
         // optimized if the need arises.
         output.Lock()
-        output.results[res.documentUrl] = res
+        output.results[res.url] = res.result
         output.Unlock()
+
+        if res.depth >= maxDepth {
+            log.Print("reached max depth")
+            break
+        }
+
 
         //log.Print("result saved: ", res.documentUrl, len(output.results))
     }
@@ -77,9 +87,9 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
     return output.results
 }
 
-func worker(queue chan queueItem, results chan *Result, maxDepth int, output outputmap) {
+func worker(queue chan urlChanItem, results chan resultChanItem, output outputmap) {
     for item := range queue {
-        log.Print("got new url from queue: ", item.url, " at depth ", item.depth)
+        //log.Print("got new url from queue: ", item.url, " at depth ", item.depth)
         //log.Print("worker began on: ", item.url, ", depth: ", item.depth)
         // If the url is in the result-set already, we skip ahead.
         output.Lock()
@@ -89,7 +99,7 @@ func worker(queue chan queueItem, results chan *Result, maxDepth int, output out
             continue
         }
         // Put placeholder so other workers correctly skip.
-        output.results[item.url] = &Result{}
+        output.results[item.url] = &Result{} // FIXME
         output.Unlock()
 
         response, err := http.Get(item.url)
@@ -101,27 +111,18 @@ func worker(queue chan queueItem, results chan *Result, maxDepth int, output out
         }
 
         urls := getUrls(response, item.url)
+        response.Body.Close()
 
-        // We set documentUrl to the url supplied instead of the actual url
-        // (which might be different after redirects) to maintain tree-structure
-        // in the result set.
-        results<-&Result{documentUrl: item.url, response: response, urls: urls}
-
-        // The first worker to hit maxDepth closes the queues, forcing all
-        // workers to quit after their current processing and the main Crawl
-        // goroutine to pop out of the result-gathering loop.
-        if item.depth >= maxDepth {
-            log.Print("reached max depth")
-            close(queue)
-            close(results)
-            return
-        }
+        // Send the result to main goroutine.
+        results<-resultChanItem{
+          url: item.url,
+          result: &Result{response: response, urls: urls},
+          depth: item.depth}
 
         // Add the new urls we found to the queue.
         for _, newUrl := range urls {
-            queue<-queueItem{url:newUrl, depth:item.depth+1}
-            log.Print("added new url to queue: ", newUrl)
-            runtime.Gosched()
+            queue<-urlChanItem{url:newUrl, depth:item.depth+1}
+            //log.Print("added new url to queue: ", newUrl)
         }
 
         //log.Print("worker finished: ", item.url)
@@ -136,7 +137,6 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
         //log.Print(err)
         return []string{}
     }
-    resp.Body.Close()
 
     // We could have chosen to use a third-party library to extract urls here,
     // but since this is a "challenge", I opted for only using tools available
