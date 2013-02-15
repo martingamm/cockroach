@@ -47,25 +47,25 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*result {
     urlChan := make(chan urlChanItem, 100) // Rather arbitrary buffer-sizes.
     resultChan := make(chan resultChanItem, 100)
 
-    // Spinning up a number of worker-goroutines. We could alternatively
-    // choose to spin up a new goroutine for every new url discovered, but
-    // we would risk running out of memory on some systems, so a pool of
-    // a manageable number of goroutines is kept. The number should be chosen
-    // so as to maximize throughput while minimizing memory-utilization, and
-    // we would need some epirical testing to figure out the optimum for a
-    // given system.
+    // Spinning up a number of worker-goroutines. We could alternatively choose
+    // to spin up a new goroutine for every new url discovered, but we would
+    // risk running out of memory on some systems, so a pool of a manageable
+    // number of goroutines is kept. The number should be chosen so as to
+    // maximize throughput while minimizing memory-utilization, and we would
+    // need some epirical testing to figure out the optimum for a given system.
     for w:= 1; w <= nWorkers; w++ {
         go worker(urlChan, resultChan, output)
     }
 
+    // This channel will never really be closed, and if our main program was
+    // not terminating after having received the output (and printing it) we'd
+    // just keep crawling for ever. Since we have many dispatchers, we can't
+    // outright close the channel; we'd get other dispatchers then trying to
+    // send on a closed channel (blows up).
+    // If the main function was supposed to keep going, we'd have to have FIXME
     urlChan<-urlChanItem{url:seedUrl, depth: 0}
 
     for res := range resultChan {
-        // The key (url) is now redundant since it serves as key AND as part
-        // of the result. Done this way to simplify the results-channel so we
-        // don't need another type (no tuples in Go) just for this.
-        // The overhead is rather small anyway, but this could of course be
-        // optimized if the need arises.
         output.Lock()
         output.results[res.url] = res.result
         output.Unlock()
@@ -102,11 +102,9 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
           result: &result{response: response, urls: urls},
           depth: item.depth}
 
-        // Add the new urls we found to the queue.
+        // Add the new urls we found to the queue through a dispatcher.
         go dispatcher(urls, output, queue, item.depth)
     }
-
-    return
 }
 
 func dispatcher(urls []string, output outputmap, queue chan urlChanItem, depth int) {
