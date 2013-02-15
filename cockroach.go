@@ -1,3 +1,8 @@
+// cockroach.go
+// A very simple webcrawler written in Go.
+// Made by Martin Gammelsæter (martingammelsaeter@gmail.com)
+//
+// (Excessive commenting on request!)
 package main
 
 import (
@@ -10,6 +15,8 @@ import (
     "strings"
     "fmt"
     "runtime"
+    "flag"
+    "os"
 )
 
 const (
@@ -64,8 +71,8 @@ func crawl(seedUrl string, maxDepth int) map[string]*result {
     // situation of a growing amount of dispatchers if they took longer to
     // complete their task than a worker. This is however unlikely since the
     // operation that takes clearly the longest time here is the http.Get().
-    // We could mitigate this problem by not spinning up detachers as
-    // goroutines, but do them blocking instead.
+    // We could mitigate this if it should prove a problem by not spinning up
+    // detachers as goroutines, but do them blocking instead.
     // The number of workers should be chosen so as to maximize throughput
     // while minimizing memory-utilization, and we would need some epirical
     // testing to figure out the optimum for a given system.
@@ -171,6 +178,12 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
         // with url.Parse, and only relay valid urls.
         if up, err := parentUrl.Parse(u[1]); err == nil {
             uo := up.String()
+            // Pruning some simple things to clean the dataset. There are
+            // probably more things that could be excluded, but these were the
+            // most prevalent false positives.
+            if strings.HasPrefix(uo, "mailto:") {
+                continue
+            }
             // Pruning away everything after a #, it isn't in the http-protocol
             // anyways. This way we avoid having multiples of what is
             // essentially the same page in the result set.
@@ -185,26 +198,35 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
     return output
 }
 
+var seedUrl = flag.String("s", "", "seed URL.")
+var maxDepth = flag.Int("d", 10, "maximum depth to crawl.")
+
 func main() {
     // No gain in letting this run on multiple cores, as it is not cpu-bound.
     // Using more cores simply slows the program down due to overhead in
     // channel communication.
     runtime.GOMAXPROCS(1)
 
+    flag.Parse()
+    if *seedUrl == "" {
+        fmt.Fprintln(os.Stderr, "Seed URL cannot be empty. See "  + os.Args[0] + " --help.")
+        os.Exit(1)
+    }
+
     // Letting crawl have a return value was done for simplicity, but one could
     // choose to make a channel through which one could receive results as they
     // came in if one wanted to process the results concurrently.
-    c := crawl("http://telenor.no", 10)
+    c := crawl(*seedUrl, *maxDepth)
 
     fmt.Println("URLs crawled:")
     fmt.Println("=============")
     i := 0
     // The contents and "children" of a URL is not used, as this is simply to
     // show that it works :)
-    for k, _ := range c {
-        fmt.Println(k)
+    for url, _ := range c {
+        fmt.Println(url)
         i++
     }
 
-    fmt.Println("Total: ", i)
+    fmt.Println("Total URLs crawled: ", i)
 }
