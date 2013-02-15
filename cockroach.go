@@ -12,6 +12,10 @@ import (
     "strings"
 )
 
+const (
+    N_WORKERS = 10000
+)
+
 type result struct {
     // We store http.Responses instead of the body string or similar because
     // http.Results are standardized and easy to work with in Go, if this
@@ -33,16 +37,16 @@ type resultChanItem struct {
 
 type outputmap struct {
     // For this minimal case we'll just keep all results in memory with the
-    // results-map, but in a real-world scenario we'd want to dump results
-    // to disk at least every now and then. Without dumping to disk the
-    // memory consumption of the crawler will steadily rise unchecked.
+    // results-map, but in a real-world scenario we'd want to dump results to
+    // disk at least every now and then. Without dumping to disk the memory
+    // consumption of the crawler will steadily rise unchecked.
     results map[string]*result
-    // All the goroutines including the main Crawl goroutine will be
-    // accessing the result-map, so we need a way to lock it.
+    // All the goroutines including the main Crawl goroutine will be accessing
+    // the result-map, so we need a way to lock it.
     sync.Mutex
 }
 
-func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*result {
+func Crawl(seedUrl string, maxDepth) map[string]*result {
     output := outputmap{results: make(map[string]*result)}
     urlChan := make(chan urlChanItem, 100) // Rather arbitrary buffer-sizes.
     resultChan := make(chan resultChanItem, 100)
@@ -53,7 +57,7 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*result {
     // number of goroutines is kept. The number should be chosen so as to
     // maximize throughput while minimizing memory-utilization, and we would
     // need some epirical testing to figure out the optimum for a given system.
-    for w:= 1; w <= nWorkers; w++ {
+    for w:= 1; w <= N_WORKERS; w++ {
         go worker(urlChan, resultChan, output)
     }
 
@@ -103,7 +107,7 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
           depth: item.depth}
 
         // Add the new urls we found to the queue through a dispatcher.
-        go dispatcher(urls, output, queue, item.depth)
+        go dispatcher(urls, output, queue, item.depth, quit)
     }
 }
 
@@ -133,9 +137,8 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
     // We could have chosen to use a third-party library to extract urls here,
     // but since this is a "challenge", I opted for only using tools available
     // in the standard library. It does not yet have a stable html package to
-    // help with this (it's still experimental :).
-    // Regexps are perhaps not the best way to deal with this, but it'll have
-    // to do for this quick demo.
+    // help with this (it's still experimental :).  Regexps are perhaps not the
+    // best way to deal with this, but it'll have to do for this quick demo.
     re := regexp.MustCompile("href=['\"]?([^'\" >]+)")
 
     urls := re.FindAllStringSubmatch(string(body), -1)
