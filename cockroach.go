@@ -126,10 +126,10 @@ func dispatcher(urls []string, output outputmap, queue chan urlChanItem, depth i
             output.Unlock()
             continue
         }
+        output.results[newUrl] = &Result{}
         output.Unlock()
 
         // Put placeholder so other workers correctly skip.
-        output.results[newUrl] = &Result{} // FIXME
         queue<-urlChanItem{url: newUrl, depth: depth+1}
         //log.Print("added new url to queue: ", newUrl)
     }
