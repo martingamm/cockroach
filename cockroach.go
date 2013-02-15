@@ -1,10 +1,5 @@
-// TODO: Remove logs and debugs.
 // TODO: Add quit after x seconds if depth not reached.
 // TODO: Stalls if < 10000 goroutines for some reason.
-// TODO: The bloody hash-map problem..
-
-// Should probably be its own package, but this is a minimal PoC.
-// Names are capitalized as if this was a separate package.
 package main
 
 import (
@@ -14,9 +9,10 @@ import (
     "log"
     "io/ioutil"
     "regexp"
+    "strings"
 )
 
-type Result struct {
+type result struct {
     // We store http.Responses instead of the body string or similar because
     // http.Results are standardized and easy to work with in Go, if this
     // crawler was to be used as a library by some other application.
@@ -31,7 +27,7 @@ type urlChanItem struct {
 
 type resultChanItem struct {
     url    string
-    result *Result
+    result *result
     depth  int
 }
 
@@ -40,14 +36,14 @@ type outputmap struct {
     // results-map, but in a real-world scenario we'd want to dump results
     // to disk at least every now and then. Without dumping to disk the
     // memory consumption of the crawler will steadily rise unchecked.
-    results map[string]*Result
+    results map[string]*result
     // All the goroutines including the main Crawl goroutine will be
     // accessing the result-map, so we need a way to lock it.
     sync.Mutex
 }
 
-func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
-    output := outputmap{results: make(map[string]*Result)}
+func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*result {
+    output := outputmap{results: make(map[string]*result)}
     urlChan := make(chan urlChanItem, 100) // Rather arbitrary buffer-sizes.
     resultChan := make(chan resultChanItem, 100)
 
@@ -78,9 +74,6 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
             log.Print("reached max depth")
             break
         }
-
-
-        //log.Print("result saved: ", res.documentUrl, len(output.results))
     }
 
     // maps in Go are a reference-type, so no use returning a pointer.
@@ -89,15 +82,14 @@ func Crawl(seedUrl string, maxDepth, nWorkers int) map[string]*Result {
 
 func worker(queue chan urlChanItem, results chan resultChanItem, output outputmap) {
     for item := range queue {
-        //log.Print("got new url from queue: ", item.url, " at depth ", item.depth)
-        //log.Print("worker began on: ", item.url, ", depth: ", item.depth)
-        // If the url is in the result-set already, we skip ahead.
+        log.Print("worker began on url: ", item.url, ", at depth: ", item.depth)
 
         response, err := http.Get(item.url)
-        // Something wrong happened to the request, log what went wrong and go
-        // to next url in queue.
+        // If something wrong happened to the request, log what went wrong and go
+        // to next url in queue. No use in panicking here, since we can still
+        // get bad links (they might return 5xx-codes for example).
         if err != nil {
-            //log.Print(err, "continued loopWASDF")
+            log.Print(err)
             continue
         }
 
@@ -107,13 +99,11 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
         // Send the result to main goroutine.
         results<-resultChanItem{
           url: item.url,
-          result: &Result{response: response, urls: urls},
+          result: &result{response: response, urls: urls},
           depth: item.depth}
 
         // Add the new urls we found to the queue.
         go dispatcher(urls, output, queue, item.depth)
-
-        //log.Print("worker finished: ", item.url)
     }
 
     return
@@ -122,23 +112,23 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
 func dispatcher(urls []string, output outputmap, queue chan urlChanItem, depth int) {
     for _, newUrl := range urls {
         output.Lock()
+        // If the url is in the result-set already, we skip ahead.
         if _, ok := output.results[newUrl]; ok {
             output.Unlock()
             continue
         }
-        output.results[newUrl] = &Result{}
+        // Put placeholder so other workers correctly skip.
+        output.results[newUrl] = &result{}
         output.Unlock()
 
-        // Put placeholder so other workers correctly skip.
         queue<-urlChanItem{url: newUrl, depth: depth+1}
-        //log.Print("added new url to queue: ", newUrl)
+        log.Print("added new url to queue: ", newUrl)
     }
 }
 
 func getUrls(resp *http.Response, parentUrlStr string) []string {
     body, err := ioutil.ReadAll(resp.Body)
     if err != nil {
-        //log.Print(err)
         return []string{}
     }
 
@@ -151,23 +141,28 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
     re := regexp.MustCompile("href=['\"]?([^'\" >]+)")
 
     urls := re.FindAllStringSubmatch(string(body), -1)
-
     if urls == nil {
         return []string{}
     }
 
-    output := []string{}
-    // Parent urls should always parse validly, so we throw away error in this
+    // Parent urls should always parse validly, so we throw away errors in this
     // simple version.
     parentUrl, _ := url.Parse(parentUrlStr)
+
+    output := []string{}
     for _, u := range urls {
         // Since the regexp is a bit shaky, we test the validity of the url
         // with url.Parse, and only relay valid urls.
         if up, err := parentUrl.Parse(u[1]); err == nil {
-            output = append(output, up.String())
-            //log.Print("url found: ", up.String())
-        } else {
-            //log.Print("url failed parsing: ", u[1])
+            uo := up.String()
+            // Pruning away everything after a #, it isn't in the http-protocol
+            // anyways. This way we avoid having multiples of what is
+            // essentially the same page in the result set.
+            if i := strings.Index(uo, "#"); i > -1 {
+                uo = uo[:i]
+            }
+            output = append(output, uo)
+            log.Print("url found: ", uo)
         }
     }
 
