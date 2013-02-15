@@ -1,5 +1,3 @@
-// TODO: Add quit after x seconds if depth not reached.
-// TODO: Stalls if < 10000 goroutines for some reason.
 package main
 
 import (
@@ -10,10 +8,14 @@ import (
     "io/ioutil"
     "regexp"
     "strings"
+    "fmt"
+    "runtime"
 )
 
 const (
-    N_WORKERS = 10000
+    // Number of workers chosen by some rather unscientific tests of different
+    // values.
+    N_WORKERS = 1000
 )
 
 type result struct {
@@ -40,6 +42,10 @@ type outputmap struct {
     // results-map, but in a real-world scenario we'd want to dump results to
     // disk at least every now and then. Without dumping to disk the memory
     // consumption of the crawler will steadily rise unchecked.
+    // By using a map from string to result we achieve a tree-like structure in
+    // a one-dimensional map. For every url, we can see it's "children" urls
+    // and look them up in the original map and so on to see the
+    // tree-structure.
     results map[string]*result
     // All the goroutines including the main Crawl goroutine will be accessing
     // the result-map, so we need a way to lock it.
@@ -54,9 +60,15 @@ func crawl(seedUrl string, maxDepth int) map[string]*result {
     // Spinning up a number of worker-goroutines. We could alternatively choose
     // to spin up a new goroutine for every new url discovered, but we would
     // risk running out of memory on some systems, so a pool of a manageable
-    // number of goroutines is kept. The number should be chosen so as to
-    // maximize throughput while minimizing memory-utilization, and we would
-    // need some epirical testing to figure out the optimum for a given system.
+    // number of goroutines is kept. In all honesty, we could possibly have a
+    // situation of a growing amount of dispatchers if they took longer to
+    // complete their task than a worker. This is however unlikely since the
+    // operation that takes clearly the longest time here is the http.Get().
+    // We could mitigate this problem by not spinning up detachers as
+    // goroutines, but do them blocking instead.
+    // The number of workers should be chosen so as to maximize throughput
+    // while minimizing memory-utilization, and we would need some epirical
+    // testing to figure out the optimum for a given system.
     for w:= 1; w <= N_WORKERS; w++ {
         go worker(urlChan, resultChan, output)
     }
@@ -66,7 +78,10 @@ func crawl(seedUrl string, maxDepth int) map[string]*result {
     // just keep crawling for ever. Since we have many dispatchers, we can't
     // outright close the channel; we'd get other dispatchers then trying to
     // send on a closed channel (blows up).
-    // If the main function was supposed to keep going, we'd have to have FIXME
+    // In this simple example we don't have to close anything since the main
+    // thread returns once the results are in, and we avoid some complexity in
+    // messaging all goroutines to stop what they are doing, which would
+    // probably be quite messy since we have an unknown amount of dispatchers.
     urlChan<-urlChanItem{url:seedUrl, depth: 0}
 
     for res := range resultChan {
@@ -168,4 +183,28 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
     }
 
     return output
+}
+
+func main() {
+    // No gain in letting this run on multiple cores, as it is not cpu-bound.
+    // Using more cores simply slows the program down due to overhead in
+    // channel communication.
+    runtime.GOMAXPROCS(1)
+
+    // Letting crawl have a return value was done for simplicity, but one could
+    // choose to make a channel through which one could receive results as they
+    // came in if one wanted to process the results concurrently.
+    c := crawl("http://telenor.no", 10)
+
+    fmt.Println("URLs crawled:")
+    fmt.Println("=============")
+    i := 0
+    // The contents and "children" of a URL is not used, as this is simply to
+    // show that it works :)
+    for k, _ := range c {
+        fmt.Println(k)
+        i++
+    }
+
+    fmt.Println("Total: ", i)
 }
