@@ -54,7 +54,7 @@ type outputmap struct {
 	// and look them up in the original map and so on to see the
 	// tree-structure.
 	results map[string]*result
-	// All the goroutines including the main Crawl goroutine will be accessing
+	// All the dispatchers including the main crawl goroutine will be accessing
 	// the result-map, so we need a way to lock it.
 	sync.Mutex
 }
