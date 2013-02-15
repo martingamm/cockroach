@@ -46,7 +46,7 @@ type outputmap struct {
     sync.Mutex
 }
 
-func Crawl(seedUrl string, maxDepth) map[string]*result {
+func crawl(seedUrl string, maxDepth int) map[string]*result {
     output := outputmap{results: make(map[string]*result)}
     urlChan := make(chan urlChanItem, 100) // Rather arbitrary buffer-sizes.
     resultChan := make(chan resultChanItem, 100)
@@ -107,7 +107,7 @@ func worker(queue chan urlChanItem, results chan resultChanItem, output outputma
           depth: item.depth}
 
         // Add the new urls we found to the queue through a dispatcher.
-        go dispatcher(urls, output, queue, item.depth, quit)
+        go dispatcher(urls, output, queue, item.depth)
     }
 }
 
