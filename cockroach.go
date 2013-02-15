@@ -151,9 +151,11 @@ func dispatcher(urls []string, output outputmap, queue chan urlChanItem, depth i
 }
 
 func getUrls(resp *http.Response, parentUrlStr string) []string {
+	output := []string{}
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return []string{}
+		return output
 	}
 
 	// We could have chosen to use a third-party library to extract urls here,
@@ -165,14 +167,13 @@ func getUrls(resp *http.Response, parentUrlStr string) []string {
 
 	urls := re.FindAllStringSubmatch(string(body), -1)
 	if urls == nil {
-		return []string{}
+		return output
 	}
 
 	// Parent urls should always parse validly, so we throw away errors in this
 	// simple version.
 	parentUrl, _ := url.Parse(parentUrlStr)
 
-	output := []string{}
 	for _, u := range urls {
 		// Since the regexp is a bit shaky, we test the validity of the url
 		// with url.Parse, and only relay valid urls.
