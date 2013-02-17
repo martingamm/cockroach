@@ -13,5 +13,8 @@ written as a test for an interview.
 * If it can't reach the desired depth (hard to do on today's internet,
   but if the seed-URL is dead for example), it panics since all
   goroutines go to sleep and we get a deadlock.
-
 * Shut down more gracefully.
+* Obey robots.txt
+* Save results to file or database.
+
+
