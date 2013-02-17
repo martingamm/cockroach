@@ -3,6 +3,7 @@
 // Made by Martin Gammelsæter (martingammelsaeter@gmail.com)
 //
 // (Excessive commenting on request!)
+// Warning: This does not obey robots.txt and use may get your ip blocked.
 package main
 
 import (
